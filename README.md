@@ -43,4 +43,64 @@ The following sensors are available once the addon is installed:
 ### Real Time Sensors
 - `sensor.solar_energy_now` - The amount of solar energy generated in real time
 - `sensor.grid_import_now` - The amount of energy imported from the grid in real time
-- `sensor.solar_used_now` - The amount of solar energy used in real time
+- `sensor.power_load_now` - House consumption in real time from Hypon monitor data (`power_load`)
+- `sensor.battery_power_flow_now` - Battery power flow in real time from Hypon monitor data (`power_bat` or `w_cha`)
+- `sensor.battery_charge_now` - Battery state of charge in real time from Hypon monitor data (`soc`)
+
+## MQTT Device Controls (Option 2)
+
+This add-on exposes TimeMode controls as MQTT discovery entities so you configure schedules from Home Assistant devices/entities (not add-on options).
+Each slot (`1` to `4`) stores its own independent `mode`, `power`, `start`, and `end` values.
+
+Required add-on options:
+
+- `enable_mqtt_controls` - Enable MQTT discovery and command listener.
+- `inverter_sn` - Inverter serial number used in Hypon API payloads.
+- `config_put_endpoint` - API path for config writes. Default `/inverter/config`.
+- `config_put_method` - API method for config writes. Default `PUT`.
+- `mqtt_host` - MQTT broker host (for Home Assistant Mosquitto add-on, use `core-mosquitto`).
+- `mqtt_port` - MQTT broker port, default `1883`.
+- `mqtt_username` / `mqtt_password` - Optional MQTT auth.
+- `mqtt_discovery_prefix` - Discovery prefix, default `homeassistant`.
+- `mqtt_base_topic` - Base topic for state/command topics, default `hypon_cloud`.
+- `mqtt_apply_on_change` - If `true`, each control change is pushed immediately to Hypon API. If `false`, use the `Apply Selected Slot Settings` button entity.
+- `mqtt_sync_from_hypon` - If `true`, periodically read TimeMode slot configuration from Hypon and refresh MQTT state.
+- `mqtt_sync_interval` - Sync interval in seconds for slot reads (`60` to `86400`, default `7200` = 120 minutes).
+
+Quick setup:
+
+1. Install and configure the Mosquitto broker add-on in Home Assistant.
+2. Confirm MQTT integration is enabled in Home Assistant.
+3. Set add-on options: `inverter_sn`, `enable_mqtt_controls: true`, and MQTT broker credentials/host.
+4. Restart this add-on.
+5. In Home Assistant, open Devices and find the Hypon inverter device created via MQTT discovery.
+
+How to use from Home Assistant:
+
+- `Slot Number` - Choose which slot (`1` to `4`) you are editing.
+- `Enable Disable Slot` - `set` to create/update slot, `disable` to disable selected slot.
+- `Slot Mode - Charge/Discharge` - Charge or discharge for the selected slot.
+- `Slot Start Time` / `Slot End Time` - Time window for the selected slot.
+- `Slot Power` - Power value for the selected slot.
+- Day switches: `Slot Day Monday`, `Slot Day Tuesday`, `Slot Day Wednesday`, `Slot Day Thursday`, `Slot Day Friday`, `Slot Day Saturday`, `Slot Day Sunday` - tick on/off to control which days the selected slot runs.
+- `Apply Selected Slot Settings` - Send current selected-slot settings to Hypon when `mqtt_apply_on_change` is `false`.
+- `Disable Selected Slot` - Sends `disableTimeMode` for the selected slot immediately.
+
+Apply progress feedback in Home Assistant:
+
+- `0 Apply In Progress` (binary sensor) - `ON` while an update is being applied.
+- `0 Apply Status` (sensor) - shows progress text such as sending request, waiting for response, confirmed, or timed out.
+- `0 Sync Status` (sensor) - shows periodic sync progress/results for `TimeMode1..4` endpoint polling.
+- `Slot 1 Enabled`, `Slot 2 Enabled`, `Slot 3 Enabled`, `Slot 4 Enabled` (binary sensors) - read-only enabled state per slot from MQTT state (`ON` when `time_enable=1`, `OFF` when disabled).
+
+After sending the update, the add-on waits for `HTTP 200` from:
+
+- `https://api.hypon.cloud/v2/inverter/<inverter_sn>/response`
+
+to confirm completion before clearing the in-progress indicator.
+
+Background slot sync endpoint:
+
+- `https://api.hypon.cloud/v2/inverter/<inverter_sn>/config/TimeModeX`
+
+where `X` is `1` to `4`. The add-on polls these endpoints on the configured interval and updates the MQTT slot entities to reflect inverter-side state.

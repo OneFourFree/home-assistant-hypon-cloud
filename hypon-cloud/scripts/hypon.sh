@@ -86,3 +86,106 @@ retrieveRealTimeSolarData () {
     bashio::log.info "Load Realtime Data End"
     echo $dataRequest
 }
+
+# ------------------------------------------------------------------------------
+# Send a payload to the inverter config endpoint.
+#
+# Arguments
+#  $1 The authentication token to use
+#  $2 JSON payload body
+# ------------------------------------------------------------------------------
+sendInverterConfigPayload () {
+  local authToken=${1}
+  local payload=${2}
+  local configEndpoint
+  local configMethod
+  local response
+  local responseCode
+  local responseMessage
+
+  configEndpoint=$(bashio::config 'config_put_endpoint')
+  if [ -z "$configEndpoint" ] || [ "$configEndpoint" = "null" ]; then
+    configEndpoint="/inverter/config"
+  fi
+
+  if [[ "$configEndpoint" != /* ]]; then
+    configEndpoint="/$configEndpoint"
+  fi
+
+  configMethod=$(bashio::config 'config_put_method')
+  if [ -z "$configMethod" ] || [ "$configMethod" = "null" ]; then
+    configMethod="PUT"
+  fi
+  configMethod=$(echo "$configMethod" | tr '[:lower:]' '[:upper:]')
+
+  response=$(curl -s "$HYPON_URL$configEndpoint" \
+    -X "$configMethod" \
+    -H "$ACCEPT_HEADER" \
+    -H "$CONTENT_HEADER" \
+    -H 'User-Agent: Mozilla/5.0' \
+    -H "authorization: Bearer $authToken" \
+    --data-raw "$payload")
+
+  if echo "$response" | jq -e . >/dev/null 2>&1; then
+    responseCode=$(echo "$response" | jq -r '.code // "unknown"')
+    responseMessage=$(echo "$response" | jq -r '.message // "unknown"')
+  else
+    responseCode="non_json"
+    responseMessage="Non-JSON response from Hypon API"
+  fi
+
+  if [ "$responseCode" = "20000" ]; then
+    bashio::log.info "TimeMode settings applied successfully"
+    return 0
+  fi
+
+  bashio::log.error "Failed to apply TimeMode settings. method=$configMethod endpoint=$configEndpoint code=$responseCode message=$responseMessage"
+  bashio::log.debug "TimeMode config response: $response"
+  return 1
+}
+
+# ------------------------------------------------------------------------------
+# Wait for inverter response endpoint to return HTTP 200.
+#
+# Arguments
+#  $1 The authentication token to use
+#  $2 Inverter serial number
+#  $3 Timeout in seconds
+#  $4 Poll interval in seconds
+# ------------------------------------------------------------------------------
+waitForInverterResponse200 () {
+  local authToken=${1}
+  local inverterSn=${2}
+  local timeoutSeconds=${3}
+  local intervalSeconds=${4}
+  local elapsed=0
+  local response
+  local httpCode
+  local responseBody
+
+  while [ "$elapsed" -lt "$timeoutSeconds" ]
+  do
+    response=$(curl -s "$HYPON_URL/inverter/$inverterSn/response" \
+      -H "$ACCEPT_HEADER" \
+      -H 'User-Agent: Mozilla/5.0' \
+      -H "authorization: Bearer $authToken" \
+      --write-out '\n%{http_code}')
+
+    httpCode=${response##*$'\n'}
+    responseBody=${response%$'\n'*}
+
+    if [ "$httpCode" = "200" ]; then
+      bashio::log.info "Inverter response endpoint returned HTTP 200"
+      return 0
+    fi
+
+    bashio::log.debug "Waiting for inverter response endpoint. http=$httpCode elapsed=${elapsed}s"
+    sleep "$intervalSeconds"
+    elapsed=$((elapsed + intervalSeconds))
+  done
+
+  bashio::log.error "Timed out waiting for inverter response endpoint HTTP 200"
+  bashio::log.debug "Last inverter response body: $responseBody"
+  return 1
+}
+
